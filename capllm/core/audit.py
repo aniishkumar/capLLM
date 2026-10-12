@@ -2,7 +2,7 @@
 capllm.core.audit
 =================
 
-Tamper-evident, append-only audit log based on a SHA-256 hash chain.
+Tamper-evident audit log based on a SHA-256 cryptographic hash chain.
 
 How the chain works
 -------------------
@@ -12,15 +12,31 @@ own hash (``entry_hash``)::
     entry_hash[i] = SHA256( canonical_json( fields[i] + previous_hash[i] ) )
     previous_hash[i] = entry_hash[i-1]          (GENESIS_HASH for i = 0)
 
-Modifying, deleting, inserting or re-ordering *any* entry changes its hash,
-which breaks the ``previous_hash`` link of every subsequent entry.
+Modifying, deleting, inserting or re-ordering *any* interior entry changes its
+hash, which breaks the ``previous_hash`` link of every subsequent entry.
 ``verify_chain`` recomputes all hashes and reports the first broken index, so
-integrity can be checked mathematically by anyone holding the log.
+internal integrity can be checked mathematically.
 
-Limitation worth stating in a defense: an attacker who can rewrite the
-*entire* log can recompute a fresh, valid chain.  Production systems close
-this gap by periodically anchoring the head hash externally (WORM storage,
-transparency log, TPM quote).  ``head_hash`` is exposed for that purpose.
+Threat Model & Essential Security Boundaries
+--------------------------------------------
+1. **Checkpointing Requirement (Tail Truncation & Total Replacement)**:
+   A standalone local hash chain CANNOT independently detect:
+     * Tail truncation (an attacker deleting the newest N entries: the remaining
+       prefix still forms a mathematically valid hash chain from genesis).
+     * Total log replacement (an attacker synthesizing an entirely new, internally
+       consistent chain from genesis).
+   Tamper evidence against these attacks is achieved ONLY when the log's head
+   hash is anchored to an externally retained checkpoint (e.g. an external witness,
+   WORM storage, append-only transparency log, or TPM quote). The verification
+   methods accept an ``expected_head_hash`` checkpoint parameter to enforce this.
+
+2. **Storage Durability**:
+   The on-disk log writes entries using file append mode (``open(..., 'a')``) with
+   explicit buffer flushing (``flush()``). However, userspace append-mode file
+   writing does NOT constitute hardware or kernel-enforced immutable storage.
+   Without operating system controls (such as Linux ``chattr +a``) or immutable
+   storage, a process with host filesystem write access could alter or truncate
+   the file.
 """
 
 from __future__ import annotations
@@ -93,9 +109,9 @@ class AuditEvent:
 class AuditLogger:
     """Thread-safe, append-only, hash-chained security event log.
 
-    Events are kept in memory (for fast verification in the demo) and,
-    optionally, appended to a JSON-Lines file opened in append mode.  The
-    class intentionally exposes *no* update or delete API.
+    Events are kept in memory (for fast verification in the supervisor) and,
+    optionally, appended to a JSON-Lines file opened in append mode with immediate
+    flushing. The class intentionally exposes *no* update or delete API.
     """
 
     def __init__(self, log_path: Optional[Path] = None) -> None:
@@ -142,6 +158,7 @@ class AuditLogger:
             if self._log_path is not None:
                 with self._log_path.open("a", encoding="utf-8") as fh:
                     fh.write(event.to_json() + "\n")
+                    fh.flush()
             return event
 
     # ------------------------------------------------------------------ #
@@ -173,13 +190,19 @@ class AuditLogger:
     # Verification
     # ------------------------------------------------------------------ #
     @staticmethod
-    def verify_events(events: Sequence[AuditEvent]) -> Tuple[bool, Optional[int], str]:
+    def verify_events(
+        events: Sequence[AuditEvent],
+        expected_head_hash: Optional[str] = None,
+    ) -> Tuple[bool, Optional[int], str]:
         """Verify an arbitrary sequence of events.
 
         Returns ``(ok, first_bad_index, reason)``.
-        Two checks per entry:
+        Performs:
           1. linkage  -- previous_hash equals the prior entry's hash;
-          2. content  -- entry_hash equals the recomputed hash.
+          2. content  -- entry_hash equals the recomputed hash;
+          3. checkpoint -- if expected_head_hash is given, ensures the head
+             matches. This is essential to detect tail truncation or wholesale
+             log replacement.
         """
         expected_prev = GENESIS_HASH
         for idx, ev in enumerate(events):
@@ -188,14 +211,29 @@ class AuditLogger:
             if ev.compute_hash() != ev.entry_hash:
                 return False, idx, "content hash mismatch (entry modified)"
             expected_prev = ev.entry_hash
+
+        if expected_head_hash is not None:
+            actual_head = events[-1].entry_hash if events else GENESIS_HASH
+            if actual_head != expected_head_hash:
+                return (
+                    False,
+                    len(events),
+                    f"checkpoint mismatch: expected head {expected_head_hash[:16]}..., "
+                    f"got {actual_head[:16]}... (tail truncated or log replaced)",
+                )
+
         return True, None, "chain intact"
 
-    def verify_chain(self) -> Tuple[bool, Optional[int], str]:
-        """Verify the in-memory chain."""
-        return self.verify_events(self.events)
+    def verify_chain(
+        self, expected_head_hash: Optional[str] = None
+    ) -> Tuple[bool, Optional[int], str]:
+        """Verify the in-memory chain, optionally against an external checkpoint."""
+        return self.verify_events(self.events, expected_head_hash=expected_head_hash)
 
     @classmethod
-    def verify_file(cls, log_path: Path) -> Tuple[bool, Optional[int], str]:
+    def verify_file(
+        cls, log_path: Path, expected_head_hash: Optional[str] = None
+    ) -> Tuple[bool, Optional[int], str]:
         """Verify a JSON-Lines log file written by this class."""
         events: List[AuditEvent] = []
         with Path(log_path).open("r", encoding="utf-8") as fh:
@@ -203,4 +241,4 @@ class AuditLogger:
                 line = line.strip()
                 if line:
                     events.append(AuditEvent(**json.loads(line)))
-        return cls.verify_events(events)
+        return cls.verify_events(events, expected_head_hash=expected_head_hash)

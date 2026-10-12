@@ -29,7 +29,12 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
-from capllm.core.capability_space import CapabilityToken, PathPermission, TokenAuthority, canonicalize_path
+from capllm.core.capability import (
+    CapabilityManager,
+    CapabilityToken,
+    PathPermission,
+    normalize_path,
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -107,8 +112,8 @@ class SyntheticWorkloadGenerator:
     """Generates balanced synthetic agent workloads covering benign and attack vectors."""
 
     def __init__(self, workspace_root: str = "/tmp/sandbox/workspace") -> None:
-        self.workspace = canonicalize_path(workspace_root)
-        self.os_etc = canonicalize_path("/etc" if os.name != "nt" else "C:\\Windows")
+        self.workspace = normalize_path(workspace_root)
+        self.os_etc = normalize_path("/etc" if os.name != "nt" else "C:\\Windows")
 
     def generate_suite(self, count_per_scenario: int = 50) -> List[TestCase]:
         cases: List[TestCase] = []
@@ -344,7 +349,7 @@ class BenchmarkHarness:
 
     def __init__(self, cases_per_scenario: int = 100) -> None:
         self.cases_per_scenario = cases_per_scenario
-        self.auth = TokenAuthority()
+        self.auth = CapabilityManager()
         self.generator = SyntheticWorkloadGenerator()
 
         # Tokens
@@ -466,7 +471,7 @@ class BenchmarkHarness:
         results: List[Dict[str, Any]] = []
 
         for scale in tenant_scales:
-            authority = TokenAuthority()
+            authority = CapabilityManager()
             for i in range(scale):
                 authority.issue_token(
                     tenant_id=f"tenant_{i:04d}",
@@ -480,8 +485,13 @@ class BenchmarkHarness:
             for i in range(min(scale, 50)):
                 authority.check_permission(f"tenant_{i:04d}", 10000 + i, "openat", f"/tmp/tenant_{i}/workspace/file.txt")
 
-            total_bytes = deep_getsizeof(authority._tokens) + deep_getsizeof(authority._proc_tokens) + \
-                          deep_getsizeof(authority._revoked_tokens) + deep_getsizeof(authority._permission_cache)
+            total_bytes = (
+                deep_getsizeof(authority._registry)
+                + deep_getsizeof(authority._pid_tokens)
+                + deep_getsizeof(authority._revoked)
+                + deep_getsizeof(authority._decision_cache)
+                + deep_getsizeof(authority._verified_sigs)
+            )
             
             bytes_per_token = total_bytes / scale if scale > 0 else 0
             results.append({

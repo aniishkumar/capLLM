@@ -4,12 +4,12 @@ from capllm.core.audit import AuditEvent, AuditLogger, EventType, Verdict
 from capllm.core.capability import (
     CapabilityManager,
     CapabilityToken,
+    PathPermission,
+    TokenAuthority,
     TokenValidation,
     normalize_path,
     path_is_within,
 )
-
-from capllm.core.capability_space import PathPermission, TokenAuthority
 
 __all__ = [
     "AuditEvent",
@@ -18,9 +18,9 @@ __all__ = [
     "Verdict",
     "CapabilityManager",
     "CapabilityToken",
+    "PathPermission",
+    "TokenAuthority",
     "TokenValidation",
     "normalize_path",
     "path_is_within",
-    "TokenAuthority",
-    "PathPermission",
 ]

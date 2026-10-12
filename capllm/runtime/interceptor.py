@@ -327,13 +327,13 @@ class DecisionEngine:
             return ok, "fd reuse of previously mediated file" if ok else f"'{req.syscall}' not granted"
         if req.syscall not in token.allowed_syscalls:
             return False, f"syscall '{req.syscall}' not granted by token"
-        if self._is_sensitive(norm):
-            return False, f"sensitive system path {norm} is non-delegable"
         granted = self.caps.path_grants(token, norm, req.perm)
         if self._has_traversal(req.resource):
             if granted:
                 return True, f"traversal resolves inside sandbox ({norm})"
             return False, f"path traversal escapes sandbox -> {norm}"
+        if self._is_sensitive(norm):
+            return False, f"sensitive system path {norm} is non-delegable"
         lexical = os.path.normcase(os.path.normpath(os.path.join(req.cwd, req.resource)))
         if granted:
             return True, "capability match after deep validation"
@@ -634,32 +634,59 @@ class SandboxSupervisor:
         tenant = token.tenant_id if token else "baseline"
         agent = token.agent_id if token else label
         result = AgentRunResult(label=label, tenant_id=tenant, agent_id=agent)
+        parent_conn, child_conn = self._ctx.Pipe(duplex=True)
+        started = time.perf_counter()
 
         if isolation_mode == "linux_namespaces":
             from capllm.runtime.sandbox_linux import LinuxSandboxRunner
             runner = LinuxSandboxRunner()
             if not runner.is_supported():
+                parent_conn.close()
+                child_conn.close()
                 reasons = "; ".join(runner.probe.unsupported_reasons)
                 result.outcome = RunOutcome.UNSUPPORTED
                 result.error = f"Linux namespaces isolation unsupported: {reasons}"
                 return result
 
-        parent_conn, child_conn = self._ctx.Pipe(duplex=True)
-        proc = self._ctx.Process(
-            target=_sandbox_entrypoint,
-            args=(child_conn, task, task_kwargs or {}, workspace, mediated),
-            daemon=True,
-            name=f"capllm-{label}",
-        )
-        started = time.perf_counter()
-        proc.start()
-        child_conn.close()  # parent keeps only its end
-        result.pid = proc.pid
-        if mediated and token is not None:
-            token = self.caps.bind_pid(token.token_id, proc.pid)  # PID binding
-            if verbose:
-                log.info("[%s/%s] spawned sandbox pid=%s cwd=%s token=%s",
-                         tenant, agent, proc.pid, workspace, token.short_id())
+            proc = runner.launch_supervised_process(
+                child_conn=child_conn,
+                task=task,
+                task_kwargs=task_kwargs or {},
+                workspace=workspace,
+                mediated=mediated,
+                tenant_id=tenant,
+                agent_id=agent,
+            )
+            child_conn.close()
+            if getattr(proc, "error", None) or not proc.pid:
+                parent_conn.close()
+                if hasattr(proc, "cleanup"):
+                    proc.cleanup()
+                result.outcome = RunOutcome.ERROR
+                result.error = f"Linux sandbox launch failed: {getattr(proc, 'error', 'failed spawning workload')}"
+                return result
+
+            result.pid = proc.pid
+            if mediated and token is not None:
+                token = self.caps.bind_pid(token.token_id, proc.pid)  # PID binding
+                if verbose:
+                    log.info("[%s/%s] spawned linux sandbox workload pid=%s cwd=%s token=%s",
+                             tenant, agent, proc.pid, workspace, token.short_id())
+        else:
+            proc = self._ctx.Process(
+                target=_sandbox_entrypoint,
+                args=(child_conn, task, task_kwargs or {}, workspace, mediated),
+                daemon=True,
+                name=f"capllm-{label}",
+            )
+            proc.start()
+            child_conn.close()  # parent keeps only its end
+            result.pid = proc.pid
+            if mediated and token is not None:
+                token = self.caps.bind_pid(token.token_id, proc.pid)  # PID binding
+                if verbose:
+                    log.info("[%s/%s] spawned sandbox pid=%s cwd=%s token=%s",
+                             tenant, agent, proc.pid, workspace, token.short_id())
 
         deadline = time.monotonic() + timeout_s
         try:
@@ -699,6 +726,8 @@ class SandboxSupervisor:
             if proc.is_alive():
                 proc.kill()
                 proc.join(timeout=3)
+            if hasattr(proc, "cleanup"):
+                proc.cleanup()
             parent_conn.close()
             result.wall_time_s = time.perf_counter() - started
         return result

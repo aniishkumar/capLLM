@@ -109,9 +109,17 @@ def run_linux_isolation_demo() -> int:
 
     print(f"  Sandbox Launcher PID:         {res.sandbox_pid or 'N/A (Host unsupported)'}")
     print(f"  User Namespace Isolation:     {res.user_ns_status}")
+    if res.parent_ns_inodes.get("user") and res.child_ns_inodes.get("user"):
+        print(f"    -> Inode Evidence:          parent={res.parent_ns_inodes.get('user')} vs child={res.child_ns_inodes.get('user')}")
     print(f"  PID Namespace Isolation:      {res.pid_ns_status}")
+    if res.parent_ns_inodes.get("pid") and res.child_ns_inodes.get("pid"):
+        print(f"    -> Inode Evidence:          parent={res.parent_ns_inodes.get('pid')} vs child={res.child_ns_inodes.get('pid')}")
     print(f"  Mount Namespace Isolation:    {res.mount_ns_status}")
+    if res.parent_ns_inodes.get("mnt") and res.child_ns_inodes.get("mnt"):
+        print(f"    -> Inode Evidence:          parent={res.parent_ns_inodes.get('mnt')} vs child={res.child_ns_inodes.get('mnt')}")
     print(f"  Network Namespace Isolation:  {res.net_ns_status}")
+    if res.parent_ns_inodes.get("net") and res.child_ns_inodes.get("net"):
+        print(f"    -> Inode Evidence:          parent={res.parent_ns_inodes.get('net')} vs child={res.child_ns_inodes.get('net')}")
 
     sentinel_str = "PASS (Invisible / Blocked)" if res.host_sentinel_blocked else ("SKIP (Non-Linux)" if not res.supported else "FAIL (Accessible)")
     cross_str = "PASS (Inaccessible / Blocked)" if res.cross_tenant_blocked else ("SKIP (Non-Linux)" if not res.supported else "FAIL (Accessible)")
@@ -120,8 +128,11 @@ def run_linux_isolation_demo() -> int:
 
     cg_path_str = res.cgroup_path or "N/A (Delegation unavailable / Unsupported)"
     print(f"  cgroups v2 Slice:             {cg_path_str}")
-    print(f"  cgroups v2 memory.max:        {res.cgroup_memory_max or 'N/A'}")
-    print(f"  cgroups v2 pids.max:          {res.cgroup_pids_max or 'N/A'}")
+    mem_str = f"requested={res.cgroup_memory_requested} B | observed={res.cgroup_memory_observed} B" if res.cgroup_memory_observed is not None else (f"requested={res.cgroup_memory_requested} B | observed=N/A (Delegation unavailable)")
+    pids_str = f"requested={res.cgroup_pids_requested} | observed={res.cgroup_pids_observed}" if res.cgroup_pids_observed is not None else (f"requested={res.cgroup_pids_requested} | observed=N/A (Delegation unavailable)")
+    print(f"  cgroups v2 memory.max:        {mem_str}")
+    print(f"  cgroups v2 pids.max:          {pids_str}")
+    print(f"  cgroups v2 Membership:        {'VERIFIED (Attached & Present in cgroup.procs)' if res.cgroup_attached else ('N/A (Delegation unavailable)' if not res.cgroup_path else 'FAILED')}")
 
     final_status = "PASS" if res.supported and res.user_ns_status == "PASS" else ("UNSUPPORTED_FALLBACK" if not res.supported else "FAIL")
     print("\n" + "=" * 100)
@@ -142,13 +153,17 @@ def run_linux_isolation_demo() -> int:
             "pid_ns_status": res.pid_ns_status,
             "mount_ns_status": res.mount_ns_status,
             "net_ns_status": res.net_ns_status,
+            "parent_ns_inodes": res.parent_ns_inodes,
+            "child_ns_inodes": res.child_ns_inodes,
             "host_sentinel_blocked": res.host_sentinel_blocked,
             "cross_tenant_blocked": res.cross_tenant_blocked,
             "network_isolated": res.network_isolated,
             "cgroup_attached": res.cgroup_attached,
             "cgroup_path": res.cgroup_path,
-            "cgroup_memory_max": res.cgroup_memory_max,
-            "cgroup_pids_max": res.cgroup_pids_max,
+            "cgroup_memory_requested": res.cgroup_memory_requested,
+            "cgroup_memory_observed": res.cgroup_memory_observed,
+            "cgroup_pids_requested": res.cgroup_pids_requested,
+            "cgroup_pids_observed": res.cgroup_pids_observed,
             "final_status": final_status,
             "error": res.error,
             "reason": res.reason,

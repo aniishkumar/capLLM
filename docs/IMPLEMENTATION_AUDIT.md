@@ -330,39 +330,56 @@ Stage 1 and Stage 1.1 established core architectural harmonization and measureme
 
 ---
 
-## 11. Stage 2 Completion Addendum (October 12, 2026)
+## 11. Stage 2 Implementation Audit & Verification Addendum (October 12, 2026)
 
-### 11.1 Completed Scope
-Stage 2 implemented Linux workload isolation, namespace containment, and cgroups v2 management:
+### 11.1 Implementation & Verification Scope
+Stage 2 repaired and verified Linux workload isolation, namespace containment, cgroups v2 integration, and supervisor execution:
 
-1. **Linux Workload Isolation Runner (`capllm/runtime/sandbox_linux.py`)**:
-   - **User Namespace (`CLONE_NEWUSER`)**: Unprivileged execution via `/proc/self/uid_map` and `/proc/self/gid_map` translation.
-   - **PID Namespace (`CLONE_NEWPID`)**: Correct hierarchical setup where the launcher configures the namespace and forks the workload child, ensuring the child is PID 1 in the new namespace.
-   - **Mount Namespace (`CLONE_NEWNS`)**: Enforces private mount propagation (`MS_REC | MS_PRIVATE`) before mounting. Confines workload to a dedicated workspace, blocking access to host sentinel files and foreign tenant workspaces.
-   - **Network Namespace (`CLONE_NEWNET`)**: Unshares host network stack, isolating the workload from host-bound TCP listeners.
-2. **cgroups v2 Manager (`CgroupV2Manager`)**:
-   - Locates unified hierarchy and user delegated slice (`/sys/fs/cgroup`).
-   - Allocates dedicated workload cgroups (`capllm/<tenant_id>/<agent_id>`).
-   - Attaches launcher/workload PIDs via `cgroup.procs`.
-   - Configures and enforces `memory.max` and `pids.max` limits.
-   - Performs clean teardown via `cgroup.kill` / SIGKILL and directory removal.
-   - Returns explicit unsupported diagnostic if cgroup delegation is unavailable.
-3. **Prerequisite Probing & Honest Host Reporting (`probe_linux_prerequisites`)**:
+1. **Real Supervisor Integration (`capllm/runtime/interceptor.py`)**:
+   - `SandboxSupervisor.run_agent(isolation_mode="linux_namespaces")` executes workloads through `LinuxSandboxRunner.launch_supervised_process()`.
+   - Workload processes execute inside isolated user, PID, mount, and network namespaces.
+   - Host PID binding (`CapabilityManager.bind_pid`), wall-clock timeouts, dual-path syscall mediation over IPC pipes, audit log recording, and resource cleanup are fully preserved.
+   - On unsupported hosts (e.g. Windows or Linux without required user namespaces), returns `RunOutcome.UNSUPPORTED` with explicit diagnostic prerequisite reasons.
+
+2. **Filesystem Containment via Restricted Mount Tree (`capllm/runtime/sandbox_linux.py`)**:
+   - Mount propagation set to private (`MS_REC | MS_PRIVATE`).
+   - Builds a restricted root filesystem using `pivot_root` (with unmount and detach of the old root via `umount2(..., MNT_DETACH)`).
+   - Only minimal read-only runtime dependencies (`/usr`, `/lib`, `/lib64`, `/bin`, `/etc`), a private `/proc`, minimal `/dev`, and the dedicated writable `/workspace` are mounted inside the container.
+   - Does not rely on `chdir()` as containment.
+   - Absolute host sentinel files outside the workspace are verified inaccessible.
+   - Foreign tenant absolute workspace directories are verified inaccessible.
+   - Temporary mount directory trees are cleanly purged on process completion, failure, or timeout.
+
+3. **cgroups v2 Limit Enforcement & Synchronization (`CgroupV2Manager`)**:
+   - Discovers unified hierarchy (`/sys/fs/cgroup`) and verifies that user delegation allows process attachment (tested dynamically via isolated probe).
+   - Requires and verifies `memory` and `pids` controllers.
+   - Writes `memory.max` and `pids.max`, then reads the files back and verifies the observed values match requested limits.
+   - Synchronizes launcher execution using parent-child pipes: the launcher is attached to the cgroup *before* it configures namespaces and forks the workload, preventing workload escape races.
+   - Verifies the workload's host PID appears in `cgroup.procs`.
+   - Never swallows errors: creation, limit-write, readback, or attachment failures return explicit unsupported or failure outcomes.
+
+4. **Honest Prerequisite Probing & Fallback (`probe_linux_prerequisites`)**:
    - Inspects distribution, kernel release, architecture, Python version, `is_linux`, unprivileged user namespaces, cgroups v2 availability, cgroup delegation, and mount/namespace permissions.
-   - On non-Linux hosts (e.g., Windows 11), honestly reports `is_linux=False` and unsupported status without faking passing results.
-4. **Runtime Integration & Evidence**:
-   - Integrated with `SandboxSupervisor` via `isolation_mode="linux_namespaces"`.
-   - Added demo entry point: `python run_demo.py --linux-isolation`.
-   - Writes structured JSON artifact to `artifacts/linux_isolation_results.json`.
-   - Added integration tests in `tests/test_sandbox_linux.py` (38 total test cases in repository; Linux-specific kernel operations gracefully skip on non-Linux hosts with explicit reasons).
+   - On unsupported operating systems or environments lacking user namespaces/cgroup delegation, returns exact diagnostic reasons and graceful fallback outcomes without faking passing tests.
+
+5. **Stage 2 Verification Evidence**:
+   - Automated unit test suite: 41 test cases passing across Windows and Linux (`tests/test_sandbox_linux.py`).
+   - Linux integration tests prove:
+     - `SandboxSupervisor` actually calls and uses `LinuxSandboxRunner`;
+     - Workload user, PID, mount, and network namespace inodes differ from the parent host;
+     - The child cannot read an absolute host sentinel file;
+     - The child cannot read a foreign tenant absolute workspace path;
+     - Configured `memory.max` and `pids.max` are verified via readback;
+     - Cgroup limit exhaustion tests for memory and PIDs.
+   - Verified via `python run_demo.py --linux-isolation` producing machine-readable JSON artifact at `artifacts/linux_isolation_results.json`.
 
 ### 11.2 Precise Security & Runtime Boundary (Post-Stage-2 Reality)
-Stage 2 supplies **OS resource isolation** only. It does **not** provide kernel system-call interception:
+Stage 2 supplies **OS container resource and filesystem boundary isolation** only. It does **not** provide kernel system-call interception:
 
 | Layer | Implementation Status | What is Mediated / Enforced | What is NOT Mediated / Enforced |
 | :--- | :--- | :--- | :--- |
 | **Interpreter Level** | CPython PEP 578 (`sys.addaudithook`) in child processes. | Standard Python calls (`open`, `socket.connect`, `subprocess.Popen`, `os.system`, `os.listdir`, `os.mkdir`, `os.remove`). | Native C/Rust extensions, `ctypes`, raw `syscall` instructions, non-Python child executables. |
-| **Linux Namespaces** | Implemented on Linux (`sandbox_linux.py`); skipped on non-Linux. | User, PID (child as PID 1), Mount (`MS_REC\|MS_PRIVATE`), and Network (`CLONE_NEWNET`) isolation. | Does not intercept syscalls inside the namespace; does not perform `pivot_root` into a full OCI/rootfs jail. |
-| **Control Groups (cgroups)** | Implemented on Linux (`CgroupV2Manager`); skipped on non-Linux. | Unified hierarchy `memory.max` and `pids.max` limit enforcement per workload slice. | No CPU core pinning, no block I/O bandwidth throttling, no fallback when user delegation is denied by host systemd. |
-| **Kernel Syscall Trapping** | **Unimplemented** (Scheduled for Stage 3). | None. | No `seccomp-bpf` or `SECCOMP_RET_USER_NOTIF`. Zero kernel VFS or socket trapping. Compiled binaries bypass PEP 578 entirely. |
-| **Container Runtimes** | **Unimplemented** (Scheduled for Stage 5). | None. | No Docker, containerd, runc, or OCI bundle extraction. |
+| **Linux Namespaces** | Implemented & Verified on Linux (`sandbox_linux.py`). | User (`CLONE_NEWUSER`), PID (`CLONE_NEWPID`, child as PID 1), Mount (`pivot_root` restricted rootfs with private propagation), and Network (`CLONE_NEWNET`) isolation. | Does not intercept syscalls inside the namespace; requires host unprivileged user namespaces support. |
+| **Control Groups (cgroups)** | Implemented on Linux (`CgroupV2Manager`). | Unified hierarchy `memory.max` and `pids.max` limit enforcement and process attachment with readback verification. | Requires systemd user delegation or root delegation to move processes into sub-cgroups; no CPU core pinning or block I/O throttling. |
+| **Kernel Syscall Trapping** | **Unimplemented** (Stage 3 boundary). | **None**. | **No `seccomp-bpf` or `SECCOMP_RET_USER_NOTIF`. Zero kernel VFS or socket trapping. Direct kernel syscalls or compiled binaries bypass userspace hooks entirely.** |
+| **Container Packaging** | **Unimplemented** (Stage 5 boundary). | None. | No Docker, containerd, runc, or OCI bundle extraction. |

@@ -2,20 +2,22 @@
 capllm.benchmarks.harness
 =========================
 
-Automated Evaluation and Benchmark Harness for CapLLM-Kernel.
+Automated In-Process Evaluation and Benchmark Harness for CapLLM-Kernel.
 
-Generates synthetic agent test cases across the 4 core threat scenarios:
-1. Unauthorized File Traversal (e.g., traversal sequences '../../', symlink/path escapes).
-2. Unauthorized Process Spawning (e.g., shell injection, unwhitelisted execve, reverse shells).
-3. Network Exfiltration (e.g., connections to rogue C2, cloud metadata endpoints, unauthorized ports).
-4. Post-Revocation Access (e.g., operations attempted after token revocation or TTL expiration).
+Generates synthetic agent test cases across 4 threat scenarios:
+1. Unauthorized File Traversal (traversal sequences '../../', sensitive path access).
+2. Unauthorized Process Spawning (unwhitelisted execve targets, shell spawning).
+3. Network Exfiltration (connections to rogue C2, metadata IPs, unwhitelisted ports).
+4. Post-Revocation Access (operations attempted after token revocation).
 
 Metrics Computed & Reported:
-- Policy decision latency distribution: p50, p95, p99, mean, max in microseconds (us).
-- Enforcement accuracy confusion matrix: True Positives, False Positives, True Negatives, False Negatives,
-  Precision, Recall, Specificity, Accuracy, and F1 Score.
-- Memory footprint of the active capability table (deep size in KB and bytes/token) at multiple tenant scales.
-- Clean Markdown / Terminal comparison table contrasting baseline execution vs CapLLM-Kernel overhead.
+- In-process policy decision latency distribution: p50, p95, p99, mean in microseconds.
+- Policy evaluation confusion matrix on synthetic test cases.
+- Memory footprint of the active capability table across tenant scales.
+- In-process comparison of simple dictionary containment vs CapabilityManager check.
+
+Note: Measurements evaluate Python userspace policy execution only, not Linux kernel
+seccomp-bpf or container namespace mediation.
 """
 
 from __future__ import annotations
@@ -502,16 +504,23 @@ class BenchmarkHarness:
         return results
 
     def print_benchmark_report(self) -> None:
-        """Runs the complete benchmark suite and prints the formatted academic evaluation report."""
+        """Runs the benchmark suite and prints the in-process synthetic evaluation report."""
+        import platform
+
         print("\n" + "=" * 90)
-        print("          CapLLM-Kernel: Automated Benchmark & Evaluation Harness")
+        print("   CapLLM-Kernel: In-Process Synthetic Policy Evaluation Benchmark")
+        print("=" * 90)
+        print(f"Platform: {platform.platform()} | Python {sys.version.split()[0]}")
+        print(f"Workload: {self.cases_per_scenario} synthetic operations per scenario category")
+        print("NOTE: Measurements represent in-process Python policy-evaluation latency,")
+        print("NOT Linux kernel-enforced system-call mediation (no seccomp, namespaces, or cgroups).")
         print("=" * 90)
 
         # 1. Enforcement Evaluation
         _, confusion, latencies = self.run_enforcement_evaluation()
         all_latencies = [l for sl in latencies.values() for l in sl]
 
-        print("\n### 1. Threat Scenario Enforcement & Policy Decision Latency\n")
+        print("\n### 1. In-Process Policy Decision Latency (Microseconds)\n")
         latency_headers = ["Scenario", "Samples", "p50 (us)", "p95 (us)", "p99 (us)", "Mean (us)"]
         latency_rows = []
         for sc in ThreatScenario:
@@ -534,14 +543,14 @@ class BenchmarkHarness:
         ])
         print(format_table(latency_headers, latency_rows))
 
-        # 2. Confusion Matrix & Accuracy
-        print("\n### 2. Enforcement Accuracy & Confusion Matrix\n")
+        # 2. Confusion Matrix & Policy Simulation
+        print("\n### 2. Policy Enforcement Simulation Confusion Matrix (Synthetic Workload)\n")
         cm_headers = ["Metric", "Value", "Description"]
         cm_rows = [
-            ["True Positives (TP)", confusion.tp, "Attacks successfully intercepted and blocked"],
-            ["True Negatives (TN)", confusion.tn, "Authorized benign operations allowed"],
-            ["False Positives (FP)", confusion.fp, "Benign operations incorrectly blocked (Over-enforcement)"],
-            ["False Negatives (FN)", confusion.fn, "Attacks incorrectly permitted (Security breach)"],
+            ["True Positives (TP)", confusion.tp, "Synthetic attack cases correctly denied by policy"],
+            ["True Negatives (TN)", confusion.tn, "Synthetic benign operations allowed by policy"],
+            ["False Positives (FP)", confusion.fp, "Synthetic benign operations blocked (Policy over-enforcement)"],
+            ["False Negatives (FN)", confusion.fn, "Synthetic attack cases permitted (Policy under-enforcement)"],
             ["Accuracy", f"{confusion.accuracy * 100:.2f}%", "(TP + TN) / Total Operations"],
             ["Precision", f"{confusion.precision * 100:.2f}%", "TP / (TP + FP)"],
             ["Recall (Sensitivity)", f"{confusion.recall * 100:.2f}%", "TP / (TP + FN)"],
@@ -550,7 +559,7 @@ class BenchmarkHarness:
         print(format_table(cm_headers, cm_rows))
 
         # 3. Active Capability Table Memory Footprint
-        print("\n### 3. Active Capability Table Memory Footprint\n")
+        print("\n### 3. Active Capability Table In-Memory Footprint\n")
         mem_results = self.measure_memory_footprint()
         mem_headers = ["Tenant / Agent Count", "Total Active Footprint (KB)", "Memory / Capability (Bytes)"]
         mem_rows = [
@@ -560,7 +569,7 @@ class BenchmarkHarness:
         print(format_table(mem_headers, mem_rows))
 
         # 4. Baseline vs CapLLM-Kernel Overhead Comparison
-        print("\n### 4. Baseline Execution vs CapLLM-Kernel Overhead Comparison\n")
+        print("\n### 4. Baseline Check vs CapLLM CapabilityManager Overhead Comparison\n")
         cmp = self.run_baseline_comparison()
         cmp_headers = ["Execution Layer", "p50 Latency (us)", "p95 Latency (us)", "p99 Latency (us)", "Mean (us)"]
         cmp_rows = [
@@ -587,8 +596,8 @@ class BenchmarkHarness:
             ],
         ]
         print(format_table(cmp_headers, cmp_rows))
-        print("Note: Policy evaluation operates at sub-microsecond/low-microsecond scale (<50us), providing")
-        print("cryptographic integrity and non-repudiation while remaining imperceptible to LLM generation speeds.\n")
+        print("Note: The above numbers measure in-memory Python function execution time (CapabilityManager.check_permission).")
+        print("They do not represent kernel context switch or system-call interception overhead.\n")
         print("=" * 90)
 
 

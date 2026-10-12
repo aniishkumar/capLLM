@@ -1,13 +1,16 @@
 """
-CapLLM-Kernel: Benchmark & Evaluation Harness Runner
-====================================================
+CapLLM-Kernel: In-Process Benchmark Harness Runner
+==================================================
 
-Launches the automated benchmark harness measuring:
-- Synthetic threat scenario evaluations (traversal, process spawning, network exfil, revocation)
-- Decision latency distributions (p50, p95, p99 in microseconds)
-- Enforcement accuracy confusion matrix
+Launches the in-process synthetic benchmark harness measuring:
+- Synthetic policy evaluation across 4 threat scenarios (traversal, process spawning, network exfil, revocation)
+- In-memory policy decision latency distributions (p50, p95, p99 in microseconds)
+- Policy enforcement simulation confusion matrix on synthetic workloads
 - Memory footprint of the active capability table across tenant scales
-- Comparison table of baseline execution vs CapLLM-Kernel security mediation overhead
+- Comparison table of baseline check vs in-memory CapabilityManager check
+
+Note: Measurements evaluate Python userspace policy execution only, not Linux kernel
+seccomp-bpf or container namespace mediation.
 """
 
 import sys

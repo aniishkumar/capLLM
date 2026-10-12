@@ -156,6 +156,31 @@ class TestCapabilitySpace(unittest.TestCase):
         self.assertEqual(bad_idx, 1)
         self.assertIn("content hash mismatch", err_msg)
 
+    def test_legacy_positional_issue_token_and_check_permission(self) -> None:
+        """Validates that legacy callers passing arguments positionally without keywords succeed."""
+        # Former signature: (tenant_id, pid, allowed_paths, allowed_syscalls, allowed_network_endpoints, ttl_seconds, cgroup_id)
+        token = self.auth.issue_token(
+            "tenant_pos",
+            7777,
+            [(self.workspace, "rw")],
+            {"openat", "read", "write", "connect"},
+            [("127.0.0.1", 9000)],
+            120.0,
+            7777,
+        )
+        self.assertEqual(token.tenant_id, "tenant_pos")
+        self.assertEqual(token.pid, 7777)
+        self.assertTrue(self.auth.verify_token_signature(token))
+
+        # Check permission using bound PID
+        test_file = os.path.join(self.workspace, "pos_data.txt")
+        self.assertTrue(self.auth.check_permission("tenant_pos", 7777, "openat", test_file, mode="r"))
+        self.assertTrue(self.auth.check_permission("tenant_pos", 7777, "write", test_file, mode="w"))
+        self.assertTrue(self.auth.check_permission("tenant_pos", 7777, "connect", "127.0.0.1:9000"))
+
+        # Unbound foreign PID must fail
+        self.assertFalse(self.auth.check_permission("tenant_pos", 8888, "openat", test_file, mode="r"))
+
 
 if __name__ == "__main__":
     unittest.main()

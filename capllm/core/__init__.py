@@ -5,11 +5,11 @@ from capllm.core.capability import (
     CapabilityManager,
     CapabilityToken,
     PathPermission,
-    TokenAuthority,
     TokenValidation,
     normalize_path,
     path_is_within,
 )
+from capllm.core.capability_space import TokenAuthority
 
 __all__ = [
     "AuditEvent",

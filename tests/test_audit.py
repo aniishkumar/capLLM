@@ -131,6 +131,42 @@ class TestAuditLoggerAndChain(unittest.TestCase):
         self.assertTrue(ok, msg)
         self.assertIsNone(bad_idx)
 
+    def test_fresh_run_ledger_truncation(self) -> None:
+        """Constructing a new AuditLogger resets/truncates the ledger for a fresh run."""
+        # Session 1: log 3 events
+        for i in range(3):
+            self.logger.log_event(
+                EventType.ACCESS_ALLOWED, "tenant_a", "agent_1", "openat", f"session1_{i}.txt", Verdict.ALLOW
+            )
+        self.assertEqual(len(self.logger), 3)
+        self.assertEqual(len(self.log_file.read_text(encoding="utf-8").strip().splitlines()), 3)
+
+        # Session 2: New AuditLogger instance pointing to the same file starts a fresh ledger
+        session2_logger = AuditLogger(log_path=self.log_file)
+        # Previous file content must be truncated to start a fresh chain from genesis
+        self.assertEqual(len(session2_logger), 0)
+        self.assertEqual(session2_logger.head_hash, "0" * 64)
+        self.assertEqual(self.log_file.read_text(encoding="utf-8"), "")
+
+        # Logging an event in session 2 starts at sequence 0 with genesis previous_hash
+        ev = session2_logger.log_event(
+            EventType.ACCESS_ALLOWED, "tenant_a", "agent_2", "openat", "session2_0.txt", Verdict.ALLOW
+        )
+        self.assertEqual(ev.sequence, 0)
+        self.assertEqual(ev.previous_hash, "0" * 64)
+        ok, _, msg = session2_logger.verify_chain()
+        self.assertTrue(ok, msg)
+
+    def test_flush_behavior(self) -> None:
+        """Log events are immediately flushed to the operating system on write."""
+        self.logger.log_event(
+            EventType.ACCESS_ALLOWED, "tenant_a", "agent_1", "openat", "flushed_file.txt", Verdict.ALLOW
+        )
+        # Read from file without closing logger; entry must be immediately readable
+        lines = self.log_file.read_text(encoding="utf-8").strip().splitlines()
+        self.assertEqual(len(lines), 1)
+        self.assertIn("flushed_file.txt", lines[0])
+
 
 if __name__ == "__main__":
     unittest.main()

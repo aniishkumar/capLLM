@@ -19,24 +19,31 @@ internal integrity can be checked mathematically.
 
 Threat Model & Essential Security Boundaries
 --------------------------------------------
-1. **Checkpointing Requirement (Tail Truncation & Total Replacement)**:
+1. **Fresh Per-Run Ledger Semantics**:
+   When constructed with a `log_path`, `AuditLogger` initializes a fresh,
+   per-run ledger for the current process session. If `log_path` points to an
+   existing file, it is intentionally truncated to initialize a new chain
+   starting at sequence 0 from `GENESIS_HASH`.
+   **Do NOT treat this as durable append-only storage across distinct runs.**
+
+2. **Flushing vs. fsync()**:
+   Each appended record performs an explicit `flush()` on the file handle to
+   transfer userspace Python buffers to the operating system. However, `flush()`
+   is NOT an `fsync()` or disk barrier: it does not guarantee that data has been
+   committed to non-volatile physical storage in the event of an OS crash or power failure.
+   Furthermore, standard userspace file writing provides no kernel-enforced
+   append-only immutability (such as Linux `chattr +a` or hardware WORM).
+
+3. **Checkpointing Requirement (Tail Truncation & Total Replacement)**:
    A standalone local hash chain CANNOT independently detect:
-     * Tail truncation (an attacker deleting the newest N entries: the remaining
-       prefix still forms a mathematically valid hash chain from genesis).
+     * Tail truncation (an attacker silently deleting the newest N entries: the
+       remaining prefix still forms a mathematically valid hash chain from genesis).
      * Total log replacement (an attacker synthesizing an entirely new, internally
        consistent chain from genesis).
    Tamper evidence against these attacks is achieved ONLY when the log's head
    hash is anchored to an externally retained checkpoint (e.g. an external witness,
    WORM storage, append-only transparency log, or TPM quote). The verification
    methods accept an ``expected_head_hash`` checkpoint parameter to enforce this.
-
-2. **Storage Durability**:
-   The on-disk log writes entries using file append mode (``open(..., 'a')``) with
-   explicit buffer flushing (``flush()``). However, userspace append-mode file
-   writing does NOT constitute hardware or kernel-enforced immutable storage.
-   Without operating system controls (such as Linux ``chattr +a``) or immutable
-   storage, a process with host filesystem write access could alter or truncate
-   the file.
 """
 
 from __future__ import annotations
@@ -107,11 +114,16 @@ class AuditEvent:
 
 
 class AuditLogger:
-    """Thread-safe, append-only, hash-chained security event log.
+    """Thread-safe, hash-chained security event log for a single execution session.
 
-    Events are kept in memory (for fast verification in the supervisor) and,
-    optionally, appended to a JSON-Lines file opened in append mode with immediate
-    flushing. The class intentionally exposes *no* update or delete API.
+    Session Lifecycle:
+      Instantiating ``AuditLogger(log_path)`` creates a fresh per-run ledger.
+      If ``log_path`` exists, it is truncated upon initialization to begin a new
+      cryptographic chain from ``GENESIS_HASH``.
+
+    Storage Notice:
+      Entries are held in memory and appended to disk with ``flush()``. This is
+      not durable across distinct runs and does not issue an ``fsync()`` sync.
     """
 
     def __init__(self, log_path: Optional[Path] = None) -> None:
@@ -121,7 +133,7 @@ class AuditLogger:
         self._log_path = Path(log_path) if log_path else None
         if self._log_path is not None:
             self._log_path.parent.mkdir(parents=True, exist_ok=True)
-            # Start a fresh chain file for this run.
+            # Fresh per-run ledger: truncate any previous run file
             self._log_path.write_text("", encoding="utf-8")
 
     # ------------------------------------------------------------------ #
@@ -158,7 +170,7 @@ class AuditLogger:
             if self._log_path is not None:
                 with self._log_path.open("a", encoding="utf-8") as fh:
                     fh.write(event.to_json() + "\n")
-                    fh.flush()
+                    fh.flush()  # Flushes userspace buffer to OS (not fsync)
             return event
 
     # ------------------------------------------------------------------ #
@@ -166,7 +178,7 @@ class AuditLogger:
     # ------------------------------------------------------------------ #
     @property
     def events(self) -> Tuple[AuditEvent, ...]:
-        """Immutable snapshot of all events."""
+        """Immutable snapshot of all events in this session."""
         with self._lock:
             return tuple(self._events)
 

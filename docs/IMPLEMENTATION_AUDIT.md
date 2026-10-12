@@ -17,12 +17,10 @@ CapLLM-Kernel is conceptualized as a capability-based security reference monitor
 5. **Security Evaluation & Reproducible Measurements**: Automated benchmarks assessing latency distributions, overhead, and threat scenarios.
 
 ### Critical Audit Findings
-* **Architectural Schism**: The codebase contains **two parallel, mutually incompatible implementations** of capability management and audit logging:
-  - Branch A (`capllm/core/capability.py`, `capllm/core/audit.py`, `capllm/runtime/interceptor.py`, `capllm/benchmarks/eval_suite.py`): Live multiprocess supervisor utilizing CPython PEP 578 audit hooks and SHA-256 hash chaining.
-  - Branch B (`capllm/core/capability_space.py`, `capllm/benchmarks/harness.py`, `tests/test_capability_space.py`): Monolithic in-memory simulation (`TokenAuthority`) with distinct data classes and zero process isolation.
-* **Interception Mechanism Reality**: Syscall mediation is currently **simulated at the Python runtime level using CPython PEP 578 audit hooks** (`sys.addaudithook`) in Branch A, and **pure in-memory dictionary checks** in Branch B. **Zero real Linux kernel system calls are trapped via kernel primitives (`seccomp-bpf` / `SECCOMP_RET_USER_NOTIF`).** Native C/Rust extensions, `ctypes`, or child binaries spawned directly can bypass Python audit hooks entirely.
-* **Missing Container Isolation**: Workload isolation currently relies on `os.chdir(workspace)` and OS child processes (`multiprocessing.Process`). No Linux namespaces (`CLONE_NEWPID`, `CLONE_NEWNS`, `CLONE_NEWNET`), cgroups (v2), or `pivot_root`/chroot containment exist. The `cgroup_id` attribute in `capability_space.py` is an unverified dummy integer.
-* **Platform Limitations**: The current implementation runs on Windows/CPython without packaging definitions (`pyproject.toml`, `requirements.txt`). Filesystem symlink escape testing fails on Windows unless elevated privileges or Developer Mode are enabled.
+* **Architectural Schism [Resolved in Stage 1 / Historical Baseline]**: Prior to Stage 1, the codebase contained two parallel, incompatible implementations (`capability.py` vs `capability_space.py`). In Stage 1 and Stage 1.1, these were harmonized: `capllm.core.capability` is the canonical implementation, and `capllm.core.capability_space.TokenAuthority` was refactored into a backwards-compatible adapter translating legacy calls (including positional arguments and PID binding) to `CapabilityManager`.
+* **Interception Mechanism Reality**: Syscall mediation is currently **simulated at the Python runtime level using CPython PEP 578 audit hooks** (`sys.addaudithook`) in live supervisor execution, and **in-process synthetic evaluation** in benchmarks. **Zero real Linux kernel system calls are trapped via kernel primitives (`seccomp-bpf` / `SECCOMP_RET_USER_NOTIF`).** Native C/Rust extensions, `ctypes`, or child binaries spawned directly can bypass Python audit hooks entirely.
+* **Missing Container Isolation**: Workload isolation currently relies on `os.chdir(workspace)` and OS child processes (`multiprocessing.Process`). No Linux namespaces (`CLONE_NEWPID`, `CLONE_NEWNS`, `CLONE_NEWNET`), cgroups (v2), or `pivot_root`/chroot containment exist. The `cgroup_id` attribute is an unverified advisory integer.
+* **Platform Limitations**: The current implementation runs on Windows/CPython with standard packaging definitions (`pyproject.toml` added in Stage 1). Filesystem symlink escape testing fails on Windows unless elevated privileges or Developer Mode are enabled.
 
 ---
 
@@ -30,7 +28,7 @@ CapLLM-Kernel is conceptualized as a capability-based security reference monitor
 
 ### 2.1 Dependencies
 * **External Dependencies**: **None**. The codebase strictly depends on the Python standard library (`hashlib`, `hmac`, `json`, `os`, `secrets`, `threading`, `time`, `uuid`, `dataclasses`, `multiprocessing`, `socket`, `subprocess`, `tempfile`, `unittest`).
-* **Missing Build/Packaging Infrastructure**: No `pyproject.toml`, `setup.cfg`, `requirements.txt`, or C/Rust compilation toolchain configurations exist.
+* **Packaging Infrastructure [Added in Stage 1]**: Standard packaging defined in `pyproject.toml` supporting PEP 517/621 builds and test suite discovery.
 
 ### 2.2 Entry Points
 | Entry Point | Path | Target Invocation | Primary Classes & Flow |
@@ -80,9 +78,12 @@ capllm/
 
 ---
 
-## 3. Detailed Architectural Comparison: `capability.py` vs. `capability_space.py`
+## 3. Detailed Architectural Comparison: `capability.py` vs. `capability_space.py` (Pre-Stage-1 Historical Baseline)
 
-A critical defect in the current repository design is the coexistence of two divergent capability representations:
+> [!NOTE]
+> **Harmonization Status**: The divergence detailed below was the historical state prior to Stage 1. As of Stage 1 and Stage 1.1, `capllm.core.capability` has been established as the canonical capability implementation, and `capllm.core.capability_space.TokenAuthority` serves as a backward-compatible adapter delegating to `CapabilityManager`.
+
+A critical defect in the original repository design was the coexistence of two divergent capability representations:
 
 | Architectural Dimension | `capllm/core/capability.py` (Runtime Supervisor Branch) | `capllm/core/capability_space.py` (Harness & Test Branch) | Divergence Impact |
 | :--- | :--- | :--- | :--- |
@@ -237,30 +238,30 @@ To elevate CapLLM-Kernel from a Python research prototype to a true kernel-enfor
 
 ## 8. Gap Analysis & Defects
 
-### 8.1 Duplications
-1. **`CapabilityToken`**: Defined as a frozen dataclass in `capability.py` and a mutable dataclass in `capability_space.py`.
-2. **Audit Logging**: Implemented as `AuditLogger`/`AuditEvent` in `audit.py` and replicated as `AuditEntry`/`AuditAction` inside `capability_space.py`.
-3. **Path Handling**: Redundant canonicalization and prefix checks (`normalize_path` vs `canonicalize_path`; `path_is_within` vs `is_subpath`).
-4. **Benchmark Runners**: Disjoint metrics engines in `eval_suite.py` (live child processes) and `harness.py` (in-memory synthetic calls).
+### 8.1 Duplications (Pre-Stage-1 Historical Baseline)
+1. **`CapabilityToken` [Resolved in Stage 1]**: Unified under frozen `CapabilityToken` in `capllm.core.capability.py`. `capllm.core.capability_space` re-exports it.
+2. **Audit Logging [Resolved in Stage 1]**: Unified under `AuditLogger` / `AuditEvent` in `capllm.core.audit.py`. `capllm.core.capability_space` re-exports compatibility types.
+3. **Path Handling [Resolved in Stage 1]**: Redundant path functions in `capability_space.py` replaced with delegates to `normalize_path` and `path_is_within`.
+4. **Benchmark Runners [Harmonized in Stage 1 & 1.1]**: `BenchmarkHarness` now delegates policy evaluation directly to `TokenAuthority` adapter and `CapabilityManager`.
 
 ### 8.2 Missing Integrations & Gaps
-1. **Broken Packaging**: No `pyproject.toml` or `setup.py`. Imports rely on manual `sys.path.insert(0, str(WORKSPACE_ROOT))`.
-2. **Unconnected Unit Tests**: `tests/test_capability_space.py` only tests the isolated `capability_space.py` class. No unit tests exist for `capllm.core.capability`, `capllm.core.audit`, or `capllm.runtime.interceptor`.
-3. **Unverified Windows Execution**: Scenario S2d (`symlink_escape`) cannot create symlinks on Windows without administrator privileges, leading to an unverified test step in `run_demo.py`.
+1. **Packaging [Resolved in Stage 1]**: Added standard `pyproject.toml` supporting PEP 517/621 builds and test discovery.
+2. **Unit Test Coverage [Resolved in Stage 1 & 1.1]**: Comprehensive unit tests added across `tests/test_capability.py`, `tests/test_audit.py`, `tests/test_interceptor.py`, and `tests/test_capability_space.py` (30 test cases total).
+3. **Unverified Windows Execution**: Scenario S2d (`symlink_escape`) requires elevated Windows privileges (Developer Mode / Administrator) to create filesystem symlinks (`WinError 1314`). On Windows without privileges, this scenario is safely detected and recorded as skipped.
 
 ---
 
 ## 9. Prioritized Multi-Stage Implementation Plan
 
-### Stage 1: Core Architecture Harmonization & Unified Capability Space
-* **Goal**: Eliminate architectural duplication, unify `CapabilityToken`, and establish standard packaging.
+### Stage 1: Core Architecture Harmonization & Unified Capability Space (Completed)
+* **Goal**: Eliminate architectural duplication, unify `CapabilityToken`, establish standard packaging, and maintain legacy API compatibility.
 * **Dependencies**: None.
 * **Work Items**:
-  1. Unify `CapabilityToken` into `capllm/core/capability.py` supporting path permissions, syscall sets, endpoint tuples, and cgroup identifiers.
-  2. Deprecate the duplicate implementations in `capllm/core/capability_space.py`, refactoring `TokenAuthority` and `BenchmarkHarness` to use the unified `CapabilityManager` and `AuditLogger`.
-  3. Create `pyproject.toml` specifying Python 3.10+ build standards and test dependencies.
-  4. Expand `tests/` with dedicated unit test suites for `CapabilityManager`, `AuditLogger`, and `DecisionEngine`.
-* **Acceptance Criteria**: All unit tests pass; `run_demo.py` and `run_benchmarks.py` utilize the exact same core classes.
+  1. Unify `CapabilityToken` into `capllm/core/capability.py` supporting path permissions, syscall sets, endpoint tuples, and cgroup identifiers. [Completed]
+  2. Implement backwards-compatible `TokenAuthority` adapter in `capllm/core/capability_space.py` supporting legacy positional calls and PID binding. [Completed in Stage 1.1]
+  3. Create `pyproject.toml` specifying Python 3.10+ build standards and test dependencies. [Completed]
+  4. Expand `tests/` with dedicated unit test suites for `CapabilityManager`, `AuditLogger`, `DecisionEngine`, and `TokenAuthority`. [Completed in Stage 1.1]
+* **Acceptance Criteria**: All unit tests pass; `run_demo.py` and `run_benchmarks.py` utilize the canonical capability model without duplicate implementations.
 
 ### Stage 2: Linux Workload Isolation (Namespaces & cgroups v2)
 * **Goal**: Provide real container boundaries for agent child processes on Linux.
@@ -298,3 +299,44 @@ To elevate CapLLM-Kernel from a Python research prototype to a true kernel-enfor
   2. Update `harness.py` to run live syscall benchmarks measuring real `seccomp_user_notif` latency overhead alongside PEP 578 baseline.
   3. Automate full benchmark regression in GitHub Actions CI running on Linux runners.
 * **Acceptance Criteria**: Full evaluation suite executes autonomously on Linux, producing verified latency distributions and 100% detection accuracy.
+
+---
+
+## 10. Stage 1 & Stage 1.1 Completion Addendum (October 12, 2026)
+
+### 10.1 Completed Scope
+Stage 1 and Stage 1.1 established core architectural harmonization and measurement precision:
+1. **Unified Capability Space (`capllm.core.capability`)**:
+   - Single canonical `CapabilityToken` (immutable, frozen dataclass) and `CapabilityManager`.
+   - HMAC-SHA256 signature verification, TTL validation, optional PID binding, path hierarchy matching, syscall set checks, and network tuple matching.
+2. **Legacy `TokenAuthority` Compatibility Adapter (`capllm.core.capability_space`)**:
+   - Fully functional adapter class translating the former positional signature:
+     `issue_token(tenant_id, pid, allowed_paths, allowed_syscalls, allowed_network_endpoints, ttl_seconds, cgroup_id)`
+   - Safely delegates to `CapabilityManager`, binding `pid` into internal PID-to-token lookup tables while generating canonical agent identifiers.
+   - Exposes legacy inspection attributes (`_tokens`, `_audit_log`, `_permissions_cache`, `revocation_count`, `active_token_count`).
+3. **Corrected Audit-Log Semantics (`capllm.core.audit`)**:
+   - Explicitly documented that `AuditLogger(log_path)` initializes a **fresh per-run ledger** and truncates any pre-existing log file at `log_path`.
+   - Corrected documentation: the audit log is **not** durable across process runs or append-only across runs.
+   - Clarified that `flush()` only flushes Python interpreter and OS runtime buffers; it is **not** a hardware `fsync()`.
+   - Documented that external checkpoints / log shipping are required to detect tail truncation or log file replacement.
+4. **Benchmark & Reporting Terminology Corrections (`capllm.benchmarks.harness`)**:
+   - Removed unbacked claims ("sub-microsecond", "<50 us", "non-repudiation", "security detection accuracy").
+   - Explicitly labeled synthetic benchmarks as **in-process synthetic policy-evaluation measurements**.
+   - Added environment introspection printing Host OS, Architecture, Python Version, and Workload Cases.
+   - Added explicit banner warning: synthetic benchmarks evaluate in-memory Python dictionaries and do not reflect Linux kernel-enforced syscall latency.
+5. **Comprehensive Test Suite & Packaging**:
+   - Standard `pyproject.toml` added for PEP 517/621 compliance.
+   - Test suite expanded to 30 automated tests across `tests/test_capability.py`, `tests/test_audit.py`, `tests/test_interceptor.py`, and `tests/test_capability_space.py`.
+
+### 10.2 Precise Security & Runtime Boundary (Current State)
+It is critical to document the exact remaining enforcement boundary to prevent misleading security claims:
+
+| Layer | Current Implementation Status | What is Mediated / Enforced | What is NOT Mediated / Enforced |
+| :--- | :--- | :--- | :--- |
+| **Interpreter Level** | CPython PEP 578 (`sys.addaudithook`) in spawned child process. | Standard Python calls (`open`, `socket.connect`, `subprocess.Popen`, `os.system`, `os.listdir`, `os.mkdir`, `os.remove`). | Native C/Rust extensions, `ctypes`, raw `syscall` instructions, non-Python child executables. |
+| **IPC & Supervisor** | OS child process via `multiprocessing.Process` communicating via `multiprocessing.Pipe`. | Syscall requests sent over the pipe are verified against `CapabilityManager` by `DecisionEngine`. | Rogue processes that close or ignore the pipe can run unrestricted unless terminated. |
+| **Audit Ledger** | SHA-256 hash chaining in memory and local JSONL file. | Tamper detection within a single run against in-place edits and out-of-order records. | Not append-only across runs (truncated on init); no fsync guarantees; no hardware WORM or external notarization. |
+| **Linux Namespaces** | **Unimplemented** (Scheduled for Stage 2). | None (`os.chdir(workspace)` only). | No PID, Mount, Network, IPC, or User isolation. Host filesystem and network remain reachable. |
+| **Control Groups (cgroups)** | **Unimplemented** (Scheduled for Stage 2). | `cgroup_id` is an advisory metadata field. | No CPU quotas, memory limits (`memory.max`), or process count limits (`pids.max`). |
+| **Kernel Syscall Trapping** | **Unimplemented** (Scheduled for Stage 3). | None. | No `seccomp-bpf` or `SECCOMP_RET_USER_NOTIF`. No kernel VFS or socket trapping. |
+| **Containerization** | **Unimplemented** (Scheduled for Stage 5). | None. | No Docker, OCI runtime, or chroot/pivot_root jail. |

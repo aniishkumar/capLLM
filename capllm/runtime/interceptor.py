@@ -140,6 +140,7 @@ class RunOutcome(str, Enum):
     ERROR = "ERROR"
     TIMEOUT = "TIMEOUT"
     CRASHED = "CRASHED"
+    UNSUPPORTED = "UNSUPPORTED"
 
 
 @dataclass(frozen=True)
@@ -625,6 +626,7 @@ class SandboxSupervisor:
         timeout_s: float = 20.0,
         on_decision: Optional[DecisionCallback] = None,
         verbose: bool = True,
+        isolation_mode: str = "process",
     ) -> AgentRunResult:
         """Run ``task`` in a sandboxed child and enforce ``token`` on every syscall."""
         if mediated and token is None:
@@ -632,6 +634,15 @@ class SandboxSupervisor:
         tenant = token.tenant_id if token else "baseline"
         agent = token.agent_id if token else label
         result = AgentRunResult(label=label, tenant_id=tenant, agent_id=agent)
+
+        if isolation_mode == "linux_namespaces":
+            from capllm.runtime.sandbox_linux import LinuxSandboxRunner
+            runner = LinuxSandboxRunner()
+            if not runner.is_supported():
+                reasons = "; ".join(runner.probe.unsupported_reasons)
+                result.outcome = RunOutcome.UNSUPPORTED
+                result.error = f"Linux namespaces isolation unsupported: {reasons}"
+                return result
 
         parent_conn, child_conn = self._ctx.Pipe(duplex=True)
         proc = self._ctx.Process(

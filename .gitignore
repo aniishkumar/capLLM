@@ -39,3 +39,9 @@ ENV/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Runtime artifacts and generated evaluation results
+capllm_audit.jsonl
+*.jsonl
+artifacts/
+.results/

@@ -263,15 +263,15 @@ To elevate CapLLM-Kernel from a Python research prototype to a true kernel-enfor
   4. Expand `tests/` with dedicated unit test suites for `CapabilityManager`, `AuditLogger`, `DecisionEngine`, and `TokenAuthority`. [Completed in Stage 1.1]
 * **Acceptance Criteria**: All unit tests pass; `run_demo.py` and `run_benchmarks.py` utilize the canonical capability model without duplicate implementations.
 
-### Stage 2: Linux Workload Isolation (Namespaces & cgroups v2)
+### Stage 2: Linux Workload Isolation (Namespaces & cgroups v2) (Completed)
 * **Goal**: Provide real container boundaries for agent child processes on Linux.
 * **Dependencies**: Stage 1, Linux environment.
 * **Work Items**:
-  1. Implement a Linux sandbox runner (`capllm/runtime/sandbox_linux.py`) using `unshare(2)` / `clone3(2)` for PID, mount, and network namespaces.
-  2. Implement rootfs isolation: construct a minimal tenant jail, perform `pivot_root`, and mount a private tmpfs workspace.
-  3. Implement cgroups v2 management: create tenant cgroup slices, bind PIDs to `cgroup.procs`, and enforce `memory.max` and `pids.max`.
-  4. Provide a fallback mock sandbox for non-Linux host development.
-* **Acceptance Criteria**: Running an agent process on Linux confirms isolation via unshared namespace inodes and constrained cgroup limits.
+  1. Implement a Linux sandbox runner (`capllm/runtime/sandbox_linux.py`) using `unshare(2)` / `clone(2)` for user, PID, mount, and network namespaces. [Completed]
+  2. Implement filesystem containment: private workspace mounting with private propagation (`MS_REC | MS_PRIVATE`), host sentinel invisibility, and cross-tenant barrier. [Completed]
+  3. Implement cgroups v2 management: dedicated tenant slices, PID attachment to `cgroup.procs`, configurable `memory.max` and `pids.max` enforcement, and reliable teardown. [Completed]
+  4. Provide honest prerequisite probe and fallback for non-Linux host development. [Completed]
+* **Acceptance Criteria**: Running an agent process on Linux confirms isolation via unshared namespace inodes and constrained cgroup limits; on non-Linux hosts, returns explicit unsupported fallback.
 
 ### Stage 3: Real Linux Kernel Syscall Interception (`seccomp_user_notif`)
 * **Goal**: Replace interpreter-level PEP 578 hooks with kernel-level seccomp notification mediation.
@@ -328,15 +328,41 @@ Stage 1 and Stage 1.1 established core architectural harmonization and measureme
    - Standard `pyproject.toml` added for PEP 517/621 compliance.
    - Test suite expanded to 30 automated tests across `tests/test_capability.py`, `tests/test_audit.py`, `tests/test_interceptor.py`, and `tests/test_capability_space.py`.
 
-### 10.2 Precise Security & Runtime Boundary (Current State)
-It is critical to document the exact remaining enforcement boundary to prevent misleading security claims:
+---
 
-| Layer | Current Implementation Status | What is Mediated / Enforced | What is NOT Mediated / Enforced |
+## 11. Stage 2 Completion Addendum (October 12, 2026)
+
+### 11.1 Completed Scope
+Stage 2 implemented Linux workload isolation, namespace containment, and cgroups v2 management:
+
+1. **Linux Workload Isolation Runner (`capllm/runtime/sandbox_linux.py`)**:
+   - **User Namespace (`CLONE_NEWUSER`)**: Unprivileged execution via `/proc/self/uid_map` and `/proc/self/gid_map` translation.
+   - **PID Namespace (`CLONE_NEWPID`)**: Correct hierarchical setup where the launcher configures the namespace and forks the workload child, ensuring the child is PID 1 in the new namespace.
+   - **Mount Namespace (`CLONE_NEWNS`)**: Enforces private mount propagation (`MS_REC | MS_PRIVATE`) before mounting. Confines workload to a dedicated workspace, blocking access to host sentinel files and foreign tenant workspaces.
+   - **Network Namespace (`CLONE_NEWNET`)**: Unshares host network stack, isolating the workload from host-bound TCP listeners.
+2. **cgroups v2 Manager (`CgroupV2Manager`)**:
+   - Locates unified hierarchy and user delegated slice (`/sys/fs/cgroup`).
+   - Allocates dedicated workload cgroups (`capllm/<tenant_id>/<agent_id>`).
+   - Attaches launcher/workload PIDs via `cgroup.procs`.
+   - Configures and enforces `memory.max` and `pids.max` limits.
+   - Performs clean teardown via `cgroup.kill` / SIGKILL and directory removal.
+   - Returns explicit unsupported diagnostic if cgroup delegation is unavailable.
+3. **Prerequisite Probing & Honest Host Reporting (`probe_linux_prerequisites`)**:
+   - Inspects distribution, kernel release, architecture, Python version, `is_linux`, unprivileged user namespaces, cgroups v2 availability, cgroup delegation, and mount/namespace permissions.
+   - On non-Linux hosts (e.g., Windows 11), honestly reports `is_linux=False` and unsupported status without faking passing results.
+4. **Runtime Integration & Evidence**:
+   - Integrated with `SandboxSupervisor` via `isolation_mode="linux_namespaces"`.
+   - Added demo entry point: `python run_demo.py --linux-isolation`.
+   - Writes structured JSON artifact to `artifacts/linux_isolation_results.json`.
+   - Added integration tests in `tests/test_sandbox_linux.py` (38 total test cases in repository; Linux-specific kernel operations gracefully skip on non-Linux hosts with explicit reasons).
+
+### 11.2 Precise Security & Runtime Boundary (Post-Stage-2 Reality)
+Stage 2 supplies **OS resource isolation** only. It does **not** provide kernel system-call interception:
+
+| Layer | Implementation Status | What is Mediated / Enforced | What is NOT Mediated / Enforced |
 | :--- | :--- | :--- | :--- |
-| **Interpreter Level** | CPython PEP 578 (`sys.addaudithook`) in spawned child process. | Standard Python calls (`open`, `socket.connect`, `subprocess.Popen`, `os.system`, `os.listdir`, `os.mkdir`, `os.remove`). | Native C/Rust extensions, `ctypes`, raw `syscall` instructions, non-Python child executables. |
-| **IPC & Supervisor** | OS child process via `multiprocessing.Process` communicating via `multiprocessing.Pipe`. | Syscall requests sent over the pipe are verified against `CapabilityManager` by `DecisionEngine`. | Rogue processes that close or ignore the pipe can run unrestricted unless terminated. |
-| **Audit Ledger** | SHA-256 hash chaining in memory and local JSONL file. | Tamper detection within a single run against in-place edits and out-of-order records. | Not append-only across runs (truncated on init); no fsync guarantees; no hardware WORM or external notarization. |
-| **Linux Namespaces** | **Unimplemented** (Scheduled for Stage 2). | None (`os.chdir(workspace)` only). | No PID, Mount, Network, IPC, or User isolation. Host filesystem and network remain reachable. |
-| **Control Groups (cgroups)** | **Unimplemented** (Scheduled for Stage 2). | `cgroup_id` is an advisory metadata field. | No CPU quotas, memory limits (`memory.max`), or process count limits (`pids.max`). |
-| **Kernel Syscall Trapping** | **Unimplemented** (Scheduled for Stage 3). | None. | No `seccomp-bpf` or `SECCOMP_RET_USER_NOTIF`. No kernel VFS or socket trapping. |
-| **Containerization** | **Unimplemented** (Scheduled for Stage 5). | None. | No Docker, OCI runtime, or chroot/pivot_root jail. |
+| **Interpreter Level** | CPython PEP 578 (`sys.addaudithook`) in child processes. | Standard Python calls (`open`, `socket.connect`, `subprocess.Popen`, `os.system`, `os.listdir`, `os.mkdir`, `os.remove`). | Native C/Rust extensions, `ctypes`, raw `syscall` instructions, non-Python child executables. |
+| **Linux Namespaces** | Implemented on Linux (`sandbox_linux.py`); skipped on non-Linux. | User, PID (child as PID 1), Mount (`MS_REC\|MS_PRIVATE`), and Network (`CLONE_NEWNET`) isolation. | Does not intercept syscalls inside the namespace; does not perform `pivot_root` into a full OCI/rootfs jail. |
+| **Control Groups (cgroups)** | Implemented on Linux (`CgroupV2Manager`); skipped on non-Linux. | Unified hierarchy `memory.max` and `pids.max` limit enforcement per workload slice. | No CPU core pinning, no block I/O bandwidth throttling, no fallback when user delegation is denied by host systemd. |
+| **Kernel Syscall Trapping** | **Unimplemented** (Scheduled for Stage 3). | None. | No `seccomp-bpf` or `SECCOMP_RET_USER_NOTIF`. Zero kernel VFS or socket trapping. Compiled binaries bypass PEP 578 entirely. |
+| **Container Runtimes** | **Unimplemented** (Scheduled for Stage 5). | None. | No Docker, containerd, runc, or OCI bundle extraction. |

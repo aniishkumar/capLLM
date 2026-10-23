@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CapLLM Terminal Security Dashboard</title>
+  <meta name="description" content="Bloomberg Terminal style security dashboard visualizing CapLLM kernel results, audit logs, threat benchmarks, and cryptographic ledger.">
+  <link rel="stylesheet" href="terminal.css">
+</head>
+<body>
+  <!-- Retro CRT Scanline Overlay -->
+  <div class="scanlines"></div>
+
+  <div class="terminal-shell">
+    <!-- Top Command Line (Inspiration: 33<GO> search headlines only, <MENU> to Undo "forexlive*") -->
+    <header class="top-command-bar">
+      <div class="command-input-container">
+        <span class="cmd-go-prefix">&lt;GO&gt; COMMAND:</span>
+        <input type="text" id="cmd-input" class="cmd-input" placeholder="TYPE 1-4, BLOCK<GO>, RESET<GO>, OR SEARCH..." autofocus autocomplete="off" spellcheck="false">
+        <button id="btn-go" class="top-btn active" title="Execute Terminal Command">&lt;GO&gt;</button>
+        <span class="cmd-shortcut-tag">&lt;MENU&gt; TO RESET</span>
+      </div>
+
+      <div class="top-right-tools">
+        <span style="color:var(--bb-silver); font-size:11px;">CAPLLM SECURITY MONITOR v2.4</span>
+        <button id="btn-toggle-crt" class="top-btn">📺 CRT: ON</button>
+      </div>
+    </header>
+
+    <!-- Filter Bar: Filter Selects, Export & Pagination -->
+    <div class="header-row-2">
+      <button class="bb-dropdown-btn">All Events &#9662;</button>
+      <span class="bb-tab-plain">Sources:</span>
+      <span class="bb-tab-highlight">Kernel Interceptor</span>
+
+      <label style="color:#aaa; font-size:11px; margin-left:6px;">Verdict:</label>
+      <select id="filter-verdict" class="bb-filter-select">
+        <option value="ALL">ALL VERDICTS</option>
+        <option value="ALLOW">ALLOW (Valid Tokens)</option>
+        <option value="BLOCK">BLOCK (Security Violations)</option>
+        <option value="PENDING">PENDING (Deep Interception)</option>
+      </select>
+
+      <label style="color:#aaa; font-size:11px;">Tenant:</label>
+      <select id="filter-tenant" class="bb-filter-select">
+        <option value="ALL">ALL TENANTS</option>
+        <option value="tenant_a">tenant_a (Alpha)</option>
+        <option value="tenant_b">tenant_b (Attacker)</option>
+        <option value="bench">bench (Micro-bench)</option>
+      </select>
+
+      <label style="color:#aaa; font-size:11px;">Syscall:</label>
+      <select id="filter-syscall" class="bb-filter-select">
+        <option value="ALL">ALL SYSCALLS</option>
+        <option value="openat">openat (Filesystem)</option>
+        <option value="connect">connect (Network)</option>
+        <option value="execve">execve (Process Spawn)</option>
+        <option value="mkdirat">mkdirat</option>
+        <option value="unlinkat">unlinkat</option>
+        <option value="getdents64">getdents64</option>
+        <option value="-">- (Authority Events)</option>
+      </select>
+
+      <button id="btn-action-save" class="page-btn" style="background:#1a1a1a; color:var(--bb-yellow); border:1px solid #444; margin-left:6px; cursor:pointer;" title="Export Filtered Audit Log to JSON">SAVE / EXPORT</button>
+
+      <div class="row2-right">
+        <span id="total-records-count" style="color:var(--bb-cyan); font-size:11px;">[270/270]</span>
+        <span>10/23/26</span>
+        <div class="pagination-controls">
+          <button id="prev-page-btn" class="page-btn">&lt;</button>
+          <span id="page-display">Pg 1 / 14</span>
+          <button id="next-page-btn" class="page-btn">&gt;</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Metallic Function Tabs (21 Live Audit Wire, 22 Threat Matrix, 23 Latency Benchmarks, 24 Cryptographic Ledger) -->
+    <nav class="header-row-3">
+      <button class="bb-function-tab active" data-screen="screen-wire">
+        <span class="f-num">21)</span> Live Audit Wire
+      </button>
+      <button class="bb-function-tab" data-screen="screen-threat">
+        <span class="f-num">22)</span> Threat Matrix (S1-S4)
+      </button>
+      <button class="bb-function-tab" data-screen="screen-benchmarks">
+        <span class="f-num">23)</span> Latency Benchmarks
+      </button>
+      <button class="bb-function-tab" data-screen="screen-ledger">
+        <span class="f-num">24)</span> Cryptographic SHA-256 Ledger
+      </button>
+    </nav>
+
+    <!-- Main Viewport Area -->
+    <main class="main-viewport">
+      
+      <!-- SCREEN 1: LIVE AUDIT WIRE (Photo recreation with 20 numbered headlines per page) -->
+      <section id="screen-wire" class="screen-view active-screen">
+        <div id="wire-feed-list" class="wire-feed-list">
+          <!-- Dynamically populated rows 1) to 20) -->
+        </div>
+      </section>
+
+      <!-- SCREEN 2: THREAT MATRIX & BENCHMARK SCENARIOS -->
+      <section id="screen-threat" class="screen-view">
+        <div class="benchmark-layout">
+          <div class="terminal-header-banner">
+            <h2>CapLLM-Kernel: Multi-Tenant Attack & Evaluation Scenarios (S1-S4)</h2>
+            <p>Workload simulation evaluated against real dual-path supervisor and HMAC token authority.</p>
+          </div>
+
+          <div id="threat-matrix-cards" class="threat-cards-grid">
+            <!-- Dynamically populated cards -->
+          </div>
+
+          <!-- Confusion Matrix Table -->
+          <div class="terminal-table-container">
+            <div class="terminal-table-title">
+              <span>POLICY ENFORCEMENT SIMULATION CONFUSION MATRIX (SYNTHETIC WORKLOAD)</span>
+              <span style="color:var(--bb-green)">OVERALL ACCURACY: 100.00%</span>
+            </div>
+            <table class="bb-table">
+              <thead>
+                <tr>
+                  <th>Metric Description</th>
+                  <th class="text-center">Count / Ratio</th>
+                  <th>Operational Security Interpretation</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>True Positives (TP)</strong></td>
+                  <td class="text-center" style="color:var(--bb-green); font-weight:bold;">200 (100.0%)</td>
+                  <td>Synthetic attack vectors correctly intercepted and denied by reference monitor</td>
+                </tr>
+                <tr>
+                  <td><strong>True Negatives (TN)</strong></td>
+                  <td class="text-center" style="color:var(--bb-green); font-weight:bold;">200 (100.0%)</td>
+                  <td>Legitimate agent operations allowed without policy hindrance</td>
+                </tr>
+                <tr>
+                  <td><strong>False Positives (FP)</strong></td>
+                  <td class="text-center" style="color:var(--bb-yellow);">0 (0.00%)</td>
+                  <td>Policy over-enforcement (Benign agent actions mistakenly blocked)</td>
+                </tr>
+                <tr>
+                  <td><strong>False Negatives (FN)</strong></td>
+                  <td class="text-center" style="color:var(--bb-yellow);">0 (0.00%)</td>
+                  <td>Policy under-enforcement (Malicious bypass escaping mediation)</td>
+                </tr>
+                <tr>
+                  <td><strong>Precision & Recall</strong></td>
+                  <td class="text-center" style="color:var(--bb-cyan); font-weight:bold;">100.00% / 100.00%</td>
+                  <td>F1-Score: 1.0000 (Optimal balance of security barrier & workflow continuity)</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- SCREEN 3: LATENCY BENCHMARKS & OVERHEAD COMPARISON -->
+      <section id="screen-benchmarks" class="screen-view">
+        <div class="benchmark-layout">
+          <div class="terminal-header-banner">
+            <h2>In-Process Policy Decision Latency & Security Overhead Measurements</h2>
+            <p>High-resolution timing profile: Microseconds per decision & comparison against direct insecure checks.</p>
+          </div>
+
+          <div class="benchmarks-grid">
+            <!-- Left: Latency Bars -->
+            <div class="terminal-table-container">
+              <div class="terminal-table-title">
+                <span>POLICY LATENCY DISTRIBUTION (MICROSECONDS)</span>
+                <span style="color:var(--bb-yellow)">P50 / P95 PROFILE</span>
+              </div>
+              <div id="latency-bars-container">
+                <!-- Dynamically generated bars -->
+              </div>
+            </div>
+
+            <!-- Right: Overhead Comparison Table -->
+            <div class="terminal-table-container">
+              <div class="terminal-table-title">
+                <span>BASELINE CHECK VS CAPLLM OVERHEAD COMPARISON</span>
+                <span style="color:var(--bb-cyan)">SECURITY MULTIPLIER</span>
+              </div>
+              <table class="bb-table">
+                <thead>
+                  <tr>
+                    <th>Execution Layer</th>
+                    <th class="text-right">p50 (&mu;s)</th>
+                    <th class="text-right">p95 (&mu;s)</th>
+                    <th class="text-right">Mean (&mu;s)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Baseline (Direct Insecure Check)</td>
+                    <td class="text-right">52.30</td>
+                    <td class="text-right">78.10</td>
+                    <td class="text-right">61.20</td>
+                  </tr>
+                  <tr>
+                    <td>CapLLM-Kernel (Mediation + Audit)</td>
+                    <td class="text-right" style="color:var(--bb-green)">176.21</td>
+                    <td class="text-right" style="color:var(--bb-green)">235.90</td>
+                    <td class="text-right" style="color:var(--bb-green)">189.64</td>
+                  </tr>
+                  <tr style="background:#111; font-weight:bold;">
+                    <td style="color:var(--bb-yellow)">Security Overhead Multiplier</td>
+                    <td class="text-right" style="color:var(--bb-yellow)">3.37x</td>
+                    <td class="text-right" style="color:var(--bb-yellow)">3.02x</td>
+                    <td class="text-right" style="color:var(--bb-yellow)">3.10x</td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <!-- Memory Footprint Table -->
+              <div class="terminal-table-title" style="margin-top:16px;">
+                <span>ACTIVE CAPABILITY TABLE IN-MEMORY FOOTPRINT</span>
+                <span style="color:var(--bb-cyan)">SCALE PROFILE</span>
+              </div>
+              <table class="bb-table">
+                <thead>
+                  <tr>
+                    <th>Agent / Tenant Scale</th>
+                    <th class="text-right">Total Memory (KB)</th>
+                    <th class="text-right">Bytes / Token</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>10 active agents</td>
+                    <td class="text-right">18.42 KB</td>
+                    <td class="text-right">1,886.2 B</td>
+                  </tr>
+                  <tr>
+                    <td>50 active agents</td>
+                    <td class="text-right">48.75 KB</td>
+                    <td class="text-right">998.4 B</td>
+                  </tr>
+                  <tr>
+                    <td>200 active agents</td>
+                    <td class="text-right">162.30 KB</td>
+                    <td class="text-right">830.9 B</td>
+                  </tr>
+                  <tr>
+                    <td>1,000 active agents</td>
+                    <td class="text-right" style="color:var(--bb-green)">735.60 KB</td>
+                    <td class="text-right" style="color:var(--bb-green)">753.2 B</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- SCREEN 4: CRYPTOGRAPHIC SHA-256 LEDGER -->
+      <section id="screen-ledger" class="screen-view">
+        <div class="benchmark-layout">
+          <div class="terminal-header-banner">
+            <h2>Mathematically Verifiable SHA-256 Hash-Chained Audit Ledger</h2>
+            <p>Every decision is chained to the parent hash. Any retrospective mutation triggers instant cryptographic breach detection.</p>
+          </div>
+
+          <div class="chain-toolbar">
+            <div>
+              <span style="color:var(--bb-yellow); font-weight:bold;">MERKLE LEDGER STATUS:</span>
+              <span style="color:var(--bb-green); font-weight:bold;">270 BLOCKS VERIFIED (0 FAULTS)</span>
+            </div>
+            <div>
+              <button id="tamper-btn" class="tamper-btn-danger">⚡ INJECT MALICIOUS TAMPER (BLOCK #14)</button>
+              <button id="repair-btn" class="tamper-btn-repair" style="display:none;">✔ REPAIR CHAIN INTEGRITY</button>
+            </div>
+          </div>
+
+          <div id="tamper-alert" class="tamper-alert-banner">
+            🚨 SECURITY BREACH DETECTED: HASH CHAIN BROKEN AT SEQUENCE #15!<br>
+            Parent hash mismatch: Block #14 was tampered with! Cryptographic verification aborted.
+          </div>
+
+          <div id="chain-blocks-container" class="chain-blocks-container">
+            <!-- Dynamically populated blocks -->
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- Bottom Wire Sub-Panel (Inspiration: 452 BN 19:51 Cocoa Rises to One-Week High on Ivorian Turmoil...) -->
+    <div id="bottom-wire-panel" class="bottom-wire-panel">
+      <!-- 4 Live Wire Headlines populated dynamically -->
+    </div>
+
+    <!-- Bottom Ticker / Marquee (Inspiration: IS SPAIN NEXT? WHAT IS THE COST OF CREDIT PROTECTION? WCDM <...) -->
+    <footer class="bottom-ticker-bar">
+      <div class="ticker-content">
+        <div class="ticker-item"><span>CAPLLM-KERNEL:</span> ONLINE [DEFCON 2]</div>
+        <div class="ticker-item"><span>SHA-256 LEDGER:</span> 270/270 BLOCKS VERIFIED (100%)</div>
+        <div class="ticker-item"><span>ATTACKS INTERCEPTED:</span> 15/15 REPELLED (SIGKILL)</div>
+        <div class="ticker-item"><span>FAST-PATH P50:</span> 176.2 &mu;s</div>
+        <div class="ticker-item"><span>CPYTHON RUNTIME:</span> PEP 578 AUDIT HOOKS ACTIVE</div>
+        <div class="ticker-item"><span>ZERO DATA LEAKS:</span> TENANT BARRIER INTACT</div>
+        <div class="ticker-item"><span>HOTKEYS:</span> 21&lt;GO&gt; WIRE | 22&lt;GO&gt; THREAT | 23&lt;GO&gt; BENCH | 24&lt;GO&gt; CHAIN</div>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Bloomberg Event Inspector Modal -->
+  <div id="inspector-modal" class="modal-overlay">
+    <div class="modal-window">
+      <div class="modal-header">
+        <span id="modal-event-title">INSPECTION RECORD: SEQ #0</span>
+        <button id="btn-modal-close" class="modal-close-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="modal-details-grid" class="modal-field-grid">
+          <!-- Populated dynamically -->
+        </div>
+
+        <div>
+          <span style="color:var(--bb-yellow); font-weight:bold; font-size:11px;">CANONICAL EVENT JSON PAYLOAD:</span>
+          <pre id="modal-raw-json" class="modal-json-pre"></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="audit_data.js"></script>
+  <script src="benchmark_data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
